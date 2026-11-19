@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+from datetime import datetime
 import sqlite3
 import pandas as pd
 import os
@@ -96,6 +97,39 @@ def on_search_click():
 search_btn = ttk.Button(control_frame, text="搜尋", command=on_search_click, width=6)
 search_btn.pack(side="left", padx=5)
 
+
+def export_cars_to_csv():
+    global current_filtered_df
+    if current_filtered_df is None or current_filtered_df.empty:
+        messagebox.showwarning("提示", "目前沒有可匯出的車輛資料！")
+        return
+
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = filedialog.asksaveasfilename(
+        title="匯出車輛清單為 CSV",
+        defaultextension=".csv",
+        initialfile=f"車庫車輛清單_{now_str}.csv",
+        filetypes=[("CSV 檔案 (*.csv)", "*.csv"), ("所有檔案 (*.*)", "*.*")],
+    )
+
+    if not file_path:
+        return
+
+    try:
+        current_filtered_df.to_csv(file_path, index=False, encoding="utf-8-sig")
+        messagebox.showinfo(
+            "匯出成功",
+            f"已成功匯出 {len(current_filtered_df):,} 筆車輛資料至：\n{file_path}",
+        )
+    except Exception as e:
+        messagebox.showerror("匯出失敗", f"寫入 CSV 時發生錯誤：\n{e}")
+
+
+export_csv_btn = ttk.Button(
+    control_frame, text="💾 匯出清單至 CSV", command=export_cars_to_csv
+)
+export_csv_btn.pack(side="right", padx=5)
+
 # 表格顯示區 (Treeview) 與捲軸
 table_frame = ttk.Frame(tab_manage)
 table_frame.pack(padx=10, pady=5, fill="both", expand=True)
@@ -122,7 +156,7 @@ tab_valuation = ttk.Frame(notebook)
 notebook.add(tab_valuation, text=" 💰 AI 智慧車價預測估價 ")
 
 val_form = ttk.LabelFrame(tab_valuation, text=" 請輸入欲估價的車輛條件 ", padding=20)
-val_form.pack(padx=20, pady=20, fill="x")
+val_form.pack(padx=20, pady=15, fill="x")
 
 ttk.Label(val_form, text="熱門車系：").grid(row=0, column=0, sticky="w", pady=8)
 car_brand_combobox = ttk.Combobox(
@@ -154,57 +188,177 @@ result_frame.pack(padx=20, pady=10, fill="both", expand=True)
 
 result_label = tk.Label(
     result_frame,
-    text="請輸入車輛資訊並點擊下方「開始估價」按鈕...",
+    text="請輸入車輛資訊並點擊下方「開始計算預估車價」按鈕...",
     font=("Arial", 11),
     fg="gray",
     justify="left",
 )
 result_label.pack(anchor="w", padx=10, pady=10)
 
+# 估價歷史紀錄
+valuation_history = []
+
 
 def calculate_price():
-    brand = car_brand_combobox.get()
-    year = year_spinbox.get()
-    km = km_entry.get()
+    brand = car_brand_combobox.get().strip()
+    year = year_spinbox.get().strip()
+    km = km_entry.get().strip()
+
+    if not brand:
+        messagebox.showwarning("格式錯誤", "請選擇或輸入車款名稱！")
+        return
 
     if not km.isdigit():
         messagebox.showwarning("格式錯誤", "里程數請輸入純數字！")
         return
 
+    try:
+        year_int = int(year)
+    except ValueError:
+        messagebox.showwarning("格式錯誤", "年份請輸入有效西元年份！")
+        return
+
     base_price = 700000 if "Toyota" in brand else 950000
-    estimated_price = base_price - (2026 - int(year)) * 40000 - int(km) * 1.5
+    estimated_price = base_price - (2026 - year_int) * 40000 - int(km) * 1.5
     estimated_price = max(int(estimated_price), 150000)
 
     low_price = int(estimated_price * 0.95)
     high_price = int(estimated_price * 1.05)
+    seller_price = int(low_price * 0.9)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 加入歷史紀錄
+    record = {
+        "估價時間": now_str,
+        "車款": brand,
+        "出廠年份": f"{year_int}年",
+        "行駛里程(公里)": int(km),
+        "基準預估價(元)": estimated_price,
+        "行情下限(元)": low_price,
+        "行情上限(元)": high_price,
+        "預估行情區間": f"NT$ {low_price:,} ~ {high_price:,} 元",
+        "買家建議": f"成交價在 NT$ {low_price:,} ~ {high_price:,} 元內屬合理範圍",
+        "賣家收購建議": f"收購價約落在下限約 90% 左右（約 NT$ {seller_price:,} 元）",
+    }
+    valuation_history.append(record)
 
     result_text = (
-        f"🚗 車款：{brand} ({year}年式)\n"
-        f"📊 行駛里程：{km} 公里\n"
+        f"🚗 車款：{brand} ({year_int}年式)\n"
+        f"📊 行駛里程：{int(km):,} 公里\n"
+        f"🕒 估價時間：{now_str}\n"
         f"--------------------------------------------------\n"
         f"💰 預估市場行情區間：新台幣 {low_price:,} ~ {high_price:,} 元\n"
         f"💡 專家建議：\n"
         f"  • 若您是買家，成交價在此區間內屬合理範圍。\n"
-        f"  • 若您是賣家，收購價可能會落在下限約 90% 左右。"
+        f"  • 若您是賣家，收購價可能會落在下限約 90% 左右（約 {seller_price:,} 元）。\n"
+        f"--------------------------------------------------\n"
+        f"📁 目前已累計 {len(valuation_history)} 筆估價紀錄，可點擊下方「💾 儲存估價結果為 CSV」進行匯出。"
     )
     result_label.config(text=result_text, fg="#2c3e50")
 
 
+def save_valuation_to_csv():
+    if not valuation_history:
+        messagebox.showwarning("提示", "目前尚無估價紀錄，請先點擊「開始計算預估車價」！")
+        return
+
+    records_to_save = valuation_history
+    if len(valuation_history) > 1:
+        choice = messagebox.askyesnocancel(
+            "儲存選項",
+            f"目前累計有 {len(valuation_history)} 筆估價紀錄：\n\n"
+            f"• 點選【是 (Yes)】：匯出全部 {len(valuation_history)} 筆紀錄\n"
+            f"• 點選【否 (No)】：僅匯出最新 1 筆紀錄\n"
+            f"• 點選【取消 (Cancel)】：取消匯出",
+        )
+        if choice is None:
+            return
+        elif choice is False:
+            records_to_save = [valuation_history[-1]]
+
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = filedialog.asksaveasfilename(
+        title="儲存估價結果為 CSV",
+        defaultextension=".csv",
+        initialfile=f"車輛估價紀錄_{now_str}.csv",
+        filetypes=[("CSV 檔案 (*.csv)", "*.csv"), ("所有檔案 (*.*)", "*.*")],
+    )
+
+    if not file_path:
+        return
+
+    try:
+        out_df = pd.DataFrame(records_to_save)
+        out_df.to_csv(file_path, index=False, encoding="utf-8-sig")
+        messagebox.showinfo(
+            "儲存成功",
+            f"已成功將 {len(records_to_save)} 筆估價紀錄儲存至：\n{file_path}",
+        )
+    except Exception as e:
+        messagebox.showerror("儲存失敗", f"寫入 CSV 時發生錯誤：\n{e}")
+
+
+def clear_valuation_history():
+    if not valuation_history:
+        messagebox.showinfo("提示", "目前沒有估價紀錄。")
+        return
+
+    if messagebox.askyesno("確認清空", f"確定要清空目前累積的 {len(valuation_history)} 筆估價紀錄嗎？"):
+        valuation_history.clear()
+        result_label.config(
+            text="已清空歷史紀錄。請輸入車輛資訊並點擊下方「開始計算預估車價」按鈕...",
+            fg="gray",
+        )
+        messagebox.showinfo("提示", "估價紀錄已清空！")
+
+
+val_btn_frame = ttk.Frame(tab_valuation)
+val_btn_frame.pack(pady=10)
+
 calc_btn = tk.Button(
-    tab_valuation,
+    val_btn_frame,
     text="✨ 開始計算預估車價",
     bg="#4CAF50",
     fg="white",
     font=("Arial", 11, "bold"),
     command=calculate_price,
     cursor="hand2",
+    padx=12,
+    pady=4,
 )
-calc_btn.pack(pady=10)
+calc_btn.pack(side="left", padx=8)
+
+save_val_btn = tk.Button(
+    val_btn_frame,
+    text="💾 儲存估價結果為 CSV",
+    bg="#2196F3",
+    fg="white",
+    font=("Arial", 11, "bold"),
+    command=save_valuation_to_csv,
+    cursor="hand2",
+    padx=12,
+    pady=4,
+)
+save_val_btn.pack(side="left", padx=8)
+
+clear_val_btn = tk.Button(
+    val_btn_frame,
+    text="🗑️ 清空紀錄",
+    bg="#e0e0e0",
+    fg="#333333",
+    font=("Arial", 10),
+    command=clear_valuation_history,
+    cursor="hand2",
+    padx=10,
+    pady=4,
+)
+clear_val_btn.pack(side="left", padx=8)
 
 
 # ----------------------------------------------------------------------
 # 3. 資料處理與排序核心邏輯
 # ----------------------------------------------------------------------
+current_filtered_df = pd.DataFrame()
 current_sort_col = None
 sort_ascending = True
 
@@ -251,7 +405,7 @@ def populate_tree_from_df(df):
 
 
 def refresh_table(sort_col=None):
-    global current_sort_col, sort_ascending
+    global current_sort_col, sort_ascending, current_filtered_df
 
     df = load_car_data()
     if df.empty:
@@ -340,6 +494,7 @@ def refresh_table(sort_col=None):
             else:
                 tree.heading(c, text=c, command=lambda col=c: None)
 
+    current_filtered_df = df.copy()
     populate_tree_from_df(df)
 
 
@@ -350,4 +505,5 @@ city_combobox.bind("<<ComboboxSelected>>", lambda e: refresh_table())
 refresh_table()
 
 # 5. 啟動主迴圈
-root.mainloop()
+if __name__ == "__main__":
+    root.mainloop()
